@@ -77,6 +77,11 @@ private static final long serialVersionUID = 0L;
                 input.readMessage(edu.sjsu.cs249.chain.UpdateRequest.parser(), extensionRegistry));
             break;
           }
+          case 32: {
+
+            lastXid_ = input.readUInt32();
+            break;
+          }
           default: {
             if (!parseUnknownField(
                 input, unknownFields, extensionRegistry, tag)) {
@@ -170,6 +175,8 @@ private static final long serialVersionUID = 0L;
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -192,6 +199,8 @@ private static final long serialVersionUID = 0L;
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -204,6 +213,8 @@ private static final long serialVersionUID = 0L;
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -221,6 +232,8 @@ private static final long serialVersionUID = 0L;
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -298,6 +311,21 @@ private static final long serialVersionUID = 0L;
     return sent_.get(index);
   }
 
+  public static final int LASTXID_FIELD_NUMBER = 4;
+  private int lastXid_;
+  /**
+   * <pre>
+   * the last Xid seen by the predecessor (and reflected in the state)
+   * </pre>
+   *
+   * <code>uint32 lastXid = 4;</code>
+   * @return The lastXid.
+   */
+  @java.lang.Override
+  public int getLastXid() {
+    return lastXid_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -323,6 +351,9 @@ private static final long serialVersionUID = 0L;
         2);
     for (int i = 0; i < sent_.size(); i++) {
       output.writeMessage(3, sent_.get(i));
+    }
+    if (lastXid_ != 0) {
+      output.writeUInt32(4, lastXid_);
     }
     unknownFields.writeTo(output);
   }
@@ -351,6 +382,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(3, sent_.get(i));
     }
+    if (lastXid_ != 0) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeUInt32Size(4, lastXid_);
+    }
     size += unknownFields.getSerializedSize();
     memoizedSize = size;
     return size;
@@ -372,6 +407,8 @@ private static final long serialVersionUID = 0L;
         other.internalGetState())) return false;
     if (!getSentList()
         .equals(other.getSentList())) return false;
+    if (getLastXid()
+        != other.getLastXid()) return false;
     if (!unknownFields.equals(other.unknownFields)) return false;
     return true;
   }
@@ -393,6 +430,8 @@ private static final long serialVersionUID = 0L;
       hash = (37 * hash) + SENT_FIELD_NUMBER;
       hash = (53 * hash) + getSentList().hashCode();
     }
+    hash = (37 * hash) + LASTXID_FIELD_NUMBER;
+    hash = (53 * hash) + getLastXid();
     hash = (29 * hash) + unknownFields.hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -558,6 +597,8 @@ private static final long serialVersionUID = 0L;
       } else {
         sentBuilder_.clear();
       }
+      lastXid_ = 0;
+
       return this;
     }
 
@@ -597,6 +638,7 @@ private static final long serialVersionUID = 0L;
       } else {
         result.sent_ = sentBuilder_.build();
       }
+      result.lastXid_ = lastXid_;
       onBuilt();
       return result;
     }
@@ -675,6 +717,9 @@ private static final long serialVersionUID = 0L;
             sentBuilder_.addAllMessages(other.sent_);
           }
         }
+      }
+      if (other.getLastXid() != 0) {
+        setLastXid(other.getLastXid());
       }
       this.mergeUnknownFields(other.unknownFields);
       onChanged();
@@ -778,6 +823,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -800,6 +847,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -812,6 +861,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -829,6 +880,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -854,6 +907,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -877,6 +932,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -893,6 +950,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * 1 - just sending missing sent messages
+     * -1 - you are not my successor
+     * the latest keys and values, some of the update requests may not be acknowledged
      * </pre>
      *
      * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -1215,6 +1274,49 @@ private static final long serialVersionUID = 0L;
         sent_ = null;
       }
       return sentBuilder_;
+    }
+
+    private int lastXid_ ;
+    /**
+     * <pre>
+     * the last Xid seen by the predecessor (and reflected in the state)
+     * </pre>
+     *
+     * <code>uint32 lastXid = 4;</code>
+     * @return The lastXid.
+     */
+    @java.lang.Override
+    public int getLastXid() {
+      return lastXid_;
+    }
+    /**
+     * <pre>
+     * the last Xid seen by the predecessor (and reflected in the state)
+     * </pre>
+     *
+     * <code>uint32 lastXid = 4;</code>
+     * @param value The lastXid to set.
+     * @return This builder for chaining.
+     */
+    public Builder setLastXid(int value) {
+      
+      lastXid_ = value;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * the last Xid seen by the predecessor (and reflected in the state)
+     * </pre>
+     *
+     * <code>uint32 lastXid = 4;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearLastXid() {
+      
+      lastXid_ = 0;
+      onChanged();
+      return this;
     }
     @java.lang.Override
     public final Builder setUnknownFields(

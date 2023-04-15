@@ -84,23 +84,24 @@ public final class Chain {
       "\"(\n\013GetResponse\022\n\n\002rc\030\001 \001(\r\022\r\n\005value\030\002 \001" +
       "(\005\";\n\rUpdateRequest\022\013\n\003key\030\001 \001(\t\022\020\n\010newV" +
       "alue\030\002 \001(\005\022\013\n\003xid\030\003 \001(\r\"\020\n\016UpdateRespons" +
-      "e\"M\n\023NewSuccessorRequest\022\024\n\014lastZxidSeen" +
+      "e\"`\n\023NewSuccessorRequest\022\024\n\014lastZxidSeen" +
       "\030\001 \001(\003\022\017\n\007lastXid\030\002 \001(\r\022\017\n\007lastAck\030\003 \001(\r" +
-      "\"\253\001\n\024NewSuccessorResponse\022\n\n\002rc\030\001 \001(\r\0225\n" +
-      "\005state\030\002 \003(\0132&.chain.NewSuccessorRespons" +
-      "e.StateEntry\022\"\n\004sent\030\003 \003(\0132\024.chain.Updat" +
-      "eRequest\032,\n\nStateEntry\022\013\n\003key\030\001 \001(\t\022\r\n\005v" +
-      "alue\030\002 \001(\r:\0028\001\"\031\n\nAckRequest\022\013\n\003xid\030\001 \001(" +
-      "\r\"\r\n\013AckResponse2G\n\020HeadChainReplica\0223\n\t" +
-      "increment\022\021.chain.IncRequest\032\023.chain.Hea" +
-      "dResponse2@\n\020TailChainReplica\022,\n\003get\022\021.c" +
-      "hain.GetRequest\032\022.chain.GetResponse2\267\001\n\007" +
-      "Replica\0225\n\006update\022\024.chain.UpdateRequest\032" +
-      "\025.chain.UpdateResponse\022G\n\014newSuccessor\022\032" +
-      ".chain.NewSuccessorRequest\032\033.chain.NewSu" +
-      "ccessorResponse\022,\n\003ack\022\021.chain.AckReques" +
-      "t\032\022.chain.AckResponseB\030\n\024edu.sjsu.cs249." +
-      "chainP\001b\006proto3"
+      "\022\021\n\tznodeName\030\004 \001(\t\"\274\001\n\024NewSuccessorResp" +
+      "onse\022\n\n\002rc\030\001 \001(\r\0225\n\005state\030\002 \003(\0132&.chain." +
+      "NewSuccessorResponse.StateEntry\022\"\n\004sent\030" +
+      "\003 \003(\0132\024.chain.UpdateRequest\022\017\n\007lastXid\030\004" +
+      " \001(\r\032,\n\nStateEntry\022\013\n\003key\030\001 \001(\t\022\r\n\005value" +
+      "\030\002 \001(\r:\0028\001\"\031\n\nAckRequest\022\013\n\003xid\030\001 \001(\r\"\r\n" +
+      "\013AckResponse2G\n\020HeadChainReplica\0223\n\tincr" +
+      "ement\022\021.chain.IncRequest\032\023.chain.HeadRes" +
+      "ponse2@\n\020TailChainReplica\022,\n\003get\022\021.chain" +
+      ".GetRequest\032\022.chain.GetResponse2\267\001\n\007Repl" +
+      "ica\0225\n\006update\022\024.chain.UpdateRequest\032\025.ch" +
+      "ain.UpdateResponse\022G\n\014newSuccessor\022\032.cha" +
+      "in.NewSuccessorRequest\032\033.chain.NewSucces" +
+      "sorResponse\022,\n\003ack\022\021.chain.AckRequest\032\022." +
+      "chain.AckResponseB\030\n\024edu.sjsu.cs249.chai" +
+      "nP\001b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -147,13 +148,13 @@ public final class Chain {
     internal_static_chain_NewSuccessorRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_chain_NewSuccessorRequest_descriptor,
-        new java.lang.String[] { "LastZxidSeen", "LastXid", "LastAck", });
+        new java.lang.String[] { "LastZxidSeen", "LastXid", "LastAck", "ZnodeName", });
     internal_static_chain_NewSuccessorResponse_descriptor =
       getDescriptor().getMessageTypes().get(7);
     internal_static_chain_NewSuccessorResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_chain_NewSuccessorResponse_descriptor,
-        new java.lang.String[] { "Rc", "State", "Sent", });
+        new java.lang.String[] { "Rc", "State", "Sent", "LastXid", });
     internal_static_chain_NewSuccessorResponse_StateEntry_descriptor =
       internal_static_chain_NewSuccessorResponse_descriptor.getNestedTypes().get(0);
     internal_static_chain_NewSuccessorResponse_StateEntry_fieldAccessorTable = new

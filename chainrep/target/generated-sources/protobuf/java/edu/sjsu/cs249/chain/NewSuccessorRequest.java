@@ -16,6 +16,7 @@ private static final long serialVersionUID = 0L;
     super(builder);
   }
   private NewSuccessorRequest() {
+    znodeName_ = "";
   }
 
   @java.lang.Override
@@ -63,6 +64,12 @@ private static final long serialVersionUID = 0L;
             lastAck_ = input.readUInt32();
             break;
           }
+          case 34: {
+            java.lang.String s = input.readStringRequireUtf8();
+
+            znodeName_ = s;
+            break;
+          }
           default: {
             if (!parseUnknownField(
                 input, unknownFields, extensionRegistry, tag)) {
@@ -102,7 +109,8 @@ private static final long serialVersionUID = 0L;
   /**
    * <pre>
    * last zxid seen by successor. used by this replica to determine if
-   * it needs to refresh its view from zookeeper
+   * it needs to refresh its view from zookeeper. this is the pZxid of the
+   * znode in which the replicas register their znodes
    * </pre>
    *
    * <code>int64 lastZxidSeen = 1;</code>
@@ -143,6 +151,52 @@ private static final long serialVersionUID = 0L;
     return lastAck_;
   }
 
+  public static final int ZNODENAME_FIELD_NUMBER = 4;
+  private volatile java.lang.Object znodeName_;
+  /**
+   * <pre>
+   * the name of the znode representing the successor link in the change
+   * </pre>
+   *
+   * <code>string znodeName = 4;</code>
+   * @return The znodeName.
+   */
+  @java.lang.Override
+  public java.lang.String getZnodeName() {
+    java.lang.Object ref = znodeName_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      znodeName_ = s;
+      return s;
+    }
+  }
+  /**
+   * <pre>
+   * the name of the znode representing the successor link in the change
+   * </pre>
+   *
+   * <code>string znodeName = 4;</code>
+   * @return The bytes for znodeName.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getZnodeNameBytes() {
+    java.lang.Object ref = znodeName_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      znodeName_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
+    }
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -166,6 +220,9 @@ private static final long serialVersionUID = 0L;
     if (lastAck_ != 0) {
       output.writeUInt32(3, lastAck_);
     }
+    if (!com.google.protobuf.GeneratedMessageV3.isStringEmpty(znodeName_)) {
+      com.google.protobuf.GeneratedMessageV3.writeString(output, 4, znodeName_);
+    }
     unknownFields.writeTo(output);
   }
 
@@ -186,6 +243,9 @@ private static final long serialVersionUID = 0L;
     if (lastAck_ != 0) {
       size += com.google.protobuf.CodedOutputStream
         .computeUInt32Size(3, lastAck_);
+    }
+    if (!com.google.protobuf.GeneratedMessageV3.isStringEmpty(znodeName_)) {
+      size += com.google.protobuf.GeneratedMessageV3.computeStringSize(4, znodeName_);
     }
     size += unknownFields.getSerializedSize();
     memoizedSize = size;
@@ -208,6 +268,8 @@ private static final long serialVersionUID = 0L;
         != other.getLastXid()) return false;
     if (getLastAck()
         != other.getLastAck()) return false;
+    if (!getZnodeName()
+        .equals(other.getZnodeName())) return false;
     if (!unknownFields.equals(other.unknownFields)) return false;
     return true;
   }
@@ -226,6 +288,8 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + getLastXid();
     hash = (37 * hash) + LASTACK_FIELD_NUMBER;
     hash = (53 * hash) + getLastAck();
+    hash = (37 * hash) + ZNODENAME_FIELD_NUMBER;
+    hash = (53 * hash) + getZnodeName().hashCode();
     hash = (29 * hash) + unknownFields.hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -365,6 +429,8 @@ private static final long serialVersionUID = 0L;
 
       lastAck_ = 0;
 
+      znodeName_ = "";
+
       return this;
     }
 
@@ -394,6 +460,7 @@ private static final long serialVersionUID = 0L;
       result.lastZxidSeen_ = lastZxidSeen_;
       result.lastXid_ = lastXid_;
       result.lastAck_ = lastAck_;
+      result.znodeName_ = znodeName_;
       onBuilt();
       return result;
     }
@@ -451,6 +518,10 @@ private static final long serialVersionUID = 0L;
       if (other.getLastAck() != 0) {
         setLastAck(other.getLastAck());
       }
+      if (!other.getZnodeName().isEmpty()) {
+        znodeName_ = other.znodeName_;
+        onChanged();
+      }
       this.mergeUnknownFields(other.unknownFields);
       onChanged();
       return this;
@@ -484,7 +555,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * last zxid seen by successor. used by this replica to determine if
-     * it needs to refresh its view from zookeeper
+     * it needs to refresh its view from zookeeper. this is the pZxid of the
+     * znode in which the replicas register their znodes
      * </pre>
      *
      * <code>int64 lastZxidSeen = 1;</code>
@@ -497,7 +569,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * last zxid seen by successor. used by this replica to determine if
-     * it needs to refresh its view from zookeeper
+     * it needs to refresh its view from zookeeper. this is the pZxid of the
+     * znode in which the replicas register their znodes
      * </pre>
      *
      * <code>int64 lastZxidSeen = 1;</code>
@@ -513,7 +586,8 @@ private static final long serialVersionUID = 0L;
     /**
      * <pre>
      * last zxid seen by successor. used by this replica to determine if
-     * it needs to refresh its view from zookeeper
+     * it needs to refresh its view from zookeeper. this is the pZxid of the
+     * znode in which the replicas register their znodes
      * </pre>
      *
      * <code>int64 lastZxidSeen = 1;</code>
@@ -608,6 +682,102 @@ private static final long serialVersionUID = 0L;
     public Builder clearLastAck() {
       
       lastAck_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private java.lang.Object znodeName_ = "";
+    /**
+     * <pre>
+     * the name of the znode representing the successor link in the change
+     * </pre>
+     *
+     * <code>string znodeName = 4;</code>
+     * @return The znodeName.
+     */
+    public java.lang.String getZnodeName() {
+      java.lang.Object ref = znodeName_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        znodeName_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
+      }
+    }
+    /**
+     * <pre>
+     * the name of the znode representing the successor link in the change
+     * </pre>
+     *
+     * <code>string znodeName = 4;</code>
+     * @return The bytes for znodeName.
+     */
+    public com.google.protobuf.ByteString
+        getZnodeNameBytes() {
+      java.lang.Object ref = znodeName_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        znodeName_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+    /**
+     * <pre>
+     * the name of the znode representing the successor link in the change
+     * </pre>
+     *
+     * <code>string znodeName = 4;</code>
+     * @param value The znodeName to set.
+     * @return This builder for chaining.
+     */
+    public Builder setZnodeName(
+        java.lang.String value) {
+      if (value == null) {
+    throw new NullPointerException();
+  }
+  
+      znodeName_ = value;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * the name of the znode representing the successor link in the change
+     * </pre>
+     *
+     * <code>string znodeName = 4;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearZnodeName() {
+      
+      znodeName_ = getDefaultInstance().getZnodeName();
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * the name of the znode representing the successor link in the change
+     * </pre>
+     *
+     * <code>string znodeName = 4;</code>
+     * @param value The bytes for znodeName to set.
+     * @return This builder for chaining.
+     */
+    public Builder setZnodeNameBytes(
+        com.google.protobuf.ByteString value) {
+      if (value == null) {
+    throw new NullPointerException();
+  }
+  checkByteStringIsUtf8(value);
+      
+      znodeName_ = value;
       onChanged();
       return this;
     }

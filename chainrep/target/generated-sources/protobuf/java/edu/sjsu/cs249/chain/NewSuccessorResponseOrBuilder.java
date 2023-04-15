@@ -20,6 +20,8 @@ public interface NewSuccessorResponseOrBuilder extends
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -28,6 +30,8 @@ public interface NewSuccessorResponseOrBuilder extends
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -43,6 +47,8 @@ public interface NewSuccessorResponseOrBuilder extends
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -52,6 +58,8 @@ public interface NewSuccessorResponseOrBuilder extends
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -63,6 +71,8 @@ public interface NewSuccessorResponseOrBuilder extends
   /**
    * <pre>
    * 1 - just sending missing sent messages
+   * -1 - you are not my successor
+   * the latest keys and values, some of the update requests may not be acknowledged
    * </pre>
    *
    * <code>map&lt;string, uint32&gt; state = 2;</code>
@@ -114,4 +124,14 @@ public interface NewSuccessorResponseOrBuilder extends
    */
   edu.sjsu.cs249.chain.UpdateRequestOrBuilder getSentOrBuilder(
       int index);
+
+  /**
+   * <pre>
+   * the last Xid seen by the predecessor (and reflected in the state)
+   * </pre>
+   *
+   * <code>uint32 lastXid = 4;</code>
+   * @return The lastXid.
+   */
+  int getLastXid();
 }

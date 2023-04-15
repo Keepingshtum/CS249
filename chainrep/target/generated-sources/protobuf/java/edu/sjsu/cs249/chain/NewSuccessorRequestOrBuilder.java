@@ -10,7 +10,8 @@ public interface NewSuccessorRequestOrBuilder extends
   /**
    * <pre>
    * last zxid seen by successor. used by this replica to determine if
-   * it needs to refresh its view from zookeeper
+   * it needs to refresh its view from zookeeper. this is the pZxid of the
+   * znode in which the replicas register their znodes
    * </pre>
    *
    * <code>int64 lastZxidSeen = 1;</code>
@@ -37,4 +38,24 @@ public interface NewSuccessorRequestOrBuilder extends
    * @return The lastAck.
    */
   int getLastAck();
+
+  /**
+   * <pre>
+   * the name of the znode representing the successor link in the change
+   * </pre>
+   *
+   * <code>string znodeName = 4;</code>
+   * @return The znodeName.
+   */
+  java.lang.String getZnodeName();
+  /**
+   * <pre>
+   * the name of the znode representing the successor link in the change
+   * </pre>
+   *
+   * <code>string znodeName = 4;</code>
+   * @return The bytes for znodeName.
+   */
+  com.google.protobuf.ByteString
+      getZnodeNameBytes();
 }

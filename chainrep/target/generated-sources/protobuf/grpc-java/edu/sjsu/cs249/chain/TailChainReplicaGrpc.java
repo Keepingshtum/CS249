@@ -5,7 +5,7 @@ import static io.grpc.MethodDescriptor.generateFullMethodName;
 /**
  */
 @javax.annotation.Generated(
-    value = "by gRPC proto compiler (version 1.53.0)",
+    value = "by gRPC proto compiler (version 1.54.0)",
     comments = "Source: chain.proto")
 @io.grpc.stub.annotations.GrpcGenerated
 public final class TailChainReplicaGrpc {
@@ -92,31 +92,32 @@ public final class TailChainReplicaGrpc {
 
   /**
    */
-  public static abstract class TailChainReplicaImplBase implements io.grpc.BindableService {
+  public interface AsyncService {
 
     /**
      */
-    public void get(edu.sjsu.cs249.chain.GetRequest request,
+    default void get(edu.sjsu.cs249.chain.GetRequest request,
         io.grpc.stub.StreamObserver<edu.sjsu.cs249.chain.GetResponse> responseObserver) {
       io.grpc.stub.ServerCalls.asyncUnimplementedUnaryCall(getGetMethod(), responseObserver);
-    }
-
-    @java.lang.Override public final io.grpc.ServerServiceDefinition bindService() {
-      return io.grpc.ServerServiceDefinition.builder(getServiceDescriptor())
-          .addMethod(
-            getGetMethod(),
-            io.grpc.stub.ServerCalls.asyncUnaryCall(
-              new MethodHandlers<
-                edu.sjsu.cs249.chain.GetRequest,
-                edu.sjsu.cs249.chain.GetResponse>(
-                  this, METHODID_GET)))
-          .build();
     }
   }
 
   /**
+   * Base class for the server implementation of the service TailChainReplica.
    */
-  public static final class TailChainReplicaStub extends io.grpc.stub.AbstractAsyncStub<TailChainReplicaStub> {
+  public static abstract class TailChainReplicaImplBase
+      implements io.grpc.BindableService, AsyncService {
+
+    @java.lang.Override public final io.grpc.ServerServiceDefinition bindService() {
+      return TailChainReplicaGrpc.bindService(this);
+    }
+  }
+
+  /**
+   * A stub to allow clients to do asynchronous rpc calls to service TailChainReplica.
+   */
+  public static final class TailChainReplicaStub
+      extends io.grpc.stub.AbstractAsyncStub<TailChainReplicaStub> {
     private TailChainReplicaStub(
         io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
       super(channel, callOptions);
@@ -138,8 +139,10 @@ public final class TailChainReplicaGrpc {
   }
 
   /**
+   * A stub to allow clients to do synchronous rpc calls to service TailChainReplica.
    */
-  public static final class TailChainReplicaBlockingStub extends io.grpc.stub.AbstractBlockingStub<TailChainReplicaBlockingStub> {
+  public static final class TailChainReplicaBlockingStub
+      extends io.grpc.stub.AbstractBlockingStub<TailChainReplicaBlockingStub> {
     private TailChainReplicaBlockingStub(
         io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
       super(channel, callOptions);
@@ -160,8 +163,10 @@ public final class TailChainReplicaGrpc {
   }
 
   /**
+   * A stub to allow clients to do ListenableFuture-style rpc calls to service TailChainReplica.
    */
-  public static final class TailChainReplicaFutureStub extends io.grpc.stub.AbstractFutureStub<TailChainReplicaFutureStub> {
+  public static final class TailChainReplicaFutureStub
+      extends io.grpc.stub.AbstractFutureStub<TailChainReplicaFutureStub> {
     private TailChainReplicaFutureStub(
         io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
       super(channel, callOptions);
@@ -189,10 +194,10 @@ public final class TailChainReplicaGrpc {
       io.grpc.stub.ServerCalls.ServerStreamingMethod<Req, Resp>,
       io.grpc.stub.ServerCalls.ClientStreamingMethod<Req, Resp>,
       io.grpc.stub.ServerCalls.BidiStreamingMethod<Req, Resp> {
-    private final TailChainReplicaImplBase serviceImpl;
+    private final AsyncService serviceImpl;
     private final int methodId;
 
-    MethodHandlers(TailChainReplicaImplBase serviceImpl, int methodId) {
+    MethodHandlers(AsyncService serviceImpl, int methodId) {
       this.serviceImpl = serviceImpl;
       this.methodId = methodId;
     }
@@ -219,6 +224,18 @@ public final class TailChainReplicaGrpc {
           throw new AssertionError();
       }
     }
+  }
+
+  public static final io.grpc.ServerServiceDefinition bindService(AsyncService service) {
+    return io.grpc.ServerServiceDefinition.builder(getServiceDescriptor())
+        .addMethod(
+          getGetMethod(),
+          io.grpc.stub.ServerCalls.asyncUnaryCall(
+            new MethodHandlers<
+              edu.sjsu.cs249.chain.GetRequest,
+              edu.sjsu.cs249.chain.GetResponse>(
+                service, METHODID_GET)))
+        .build();
   }
 
   private static abstract class TailChainReplicaBaseDescriptorSupplier
