@@ -19,42 +19,49 @@ public class ReplicaService extends ReplicaGrpc.ReplicaImplBase {
     }
 
     /**
-     * @param request : Update request received by replica
+     * @param request          : Update request received by replica
      * @param responseObserver : Corresponding responseObserver
-     *
+     *                         <p>
      *                         Defines Behaviour for how the update requests propagate down the replica chain
      */
     @Override
     public void update(UpdateRequest request, StreamObserver<UpdateResponse> responseObserver) {
-        log.info("Update request received");
+        synchronized (chainRepDriver) {
+            String requestKey = request.getKey();
+            int newValue = request.getNewValue();
+            int requestXid = request.getXid();
+            log.info("Update request received");
+            log.info("xid: " + requestXid + ", key: " + requestKey + ", Value: " + newValue);
 
-        String key = request.getKey();
-        int newValue = request.getNewValue();
-        int xid = request.getXid();
 
-        log.info("xid: " + xid + ", key: " + key + ", Value: " + newValue);
+            //Always update replica before sending the request onwards down the chain
+            chainRepDriver.replicaMap.put(requestKey, newValue);
+            chainRepDriver.lastXidSeen = requestXid;
+            chainRepDriver.pendingUpdateRequests.put(requestXid, new ChainRepDriver.Triple(requestKey, newValue, null));
 
+        /*
+        Finish the whole UpdateRequest - Response loop
+        So that the whole chain doesn't have to wait because of one request
+         */
+            log.info("Completing responseObserver with XID " + requestXid);
+            responseObserver.onNext(UpdateResponse.newBuilder().build());
+            responseObserver.onCompleted();
+            log.info("...Done");
 
-        //We always update our map before sending the request onwards down the chain
-        chainRepDriver.replicaMap.put(key, newValue);
+            log.info("Is Tail: " + chainRepDriver.isTail);
 
-        chainRepDriver.lastUpdateRequestXid = xid;
-        chainRepDriver.pendingUpdateRequests.put(xid, new ChainRepDriver.Triple(key,newValue,null));
+            //If you are tail, no need to send the message down further. Just ack back
+            if (chainRepDriver.isTail) {
+                log.info("Acking back");
+                chainRepDriver.ack(requestXid);
+            }
+            //If you are not tail, send the message down the chain
+            else if (chainRepDriver.successorContacted) {
+                chainRepDriver.updateSuccessor(requestKey, newValue, requestXid);
+            }
 
-        log.info("Is Tail: " + chainRepDriver.isTail);
-
-        //If you are tail, no need to send the message down further. Just ack back
-        if (chainRepDriver.isTail) {
-            log.info("Acking back");
-            chainRepDriver.ack(xid);
+            log.info("Update completed");
         }
-        //If you are not tail, send the message down the chain
-        else if (chainRepDriver.successorContacted) {
-            chainRepDriver.updateSuccessor(key, newValue, xid);
-        }
-        responseObserver.onNext(UpdateResponse.newBuilder().build());
-        responseObserver.onCompleted();
-        log.info("Update completed");
     }
 
     /**
@@ -62,47 +69,55 @@ public class ReplicaService extends ReplicaGrpc.ReplicaImplBase {
      * will be called by a new successor to this replica
      * </pre>
      *
-     * @param request
-     * @param responseObserver
+     * @param request           : newSucc request received by replica
+     * @param responseObserver: corresponding responseObserver
+     *
+     *                          <post>
+     *                          The newSucc Request informs the pred that there is a new Successor
+     *                          Replicas will ignore requests from replicas with zk Views older than theirs
+     *                          And will sync their views if the successor has a newer view before proceeding.
+     *                          </post>
      */
     @Override
     public void newSuccessor(NewSuccessorRequest request, StreamObserver<NewSuccessorResponse> responseObserver) {
-        //TODO: REFACTOR
         synchronized (chainRepDriver) {
-            log.info("newSuccessor grpc called");
+            log.info("newSuccessor called");
 
             long lastZxidSeen = request.getLastZxidSeen();
             int lastXid = request.getLastXid();
             int lastAck = request.getLastAck();
             String znodeName = request.getZnodeName();
 
-            log.info("request params");
-            log.info("lastZxidSeen: " + lastZxidSeen +
-                    ", lastXid: " + lastXid +
-                    ", lastAck: " + lastAck +
-                    ", znodeName: " + znodeName);
-            log.info("my lastZxidSeen: " + chainRepDriver.lastZxidSeen);
+            log.info("lastZxidSeen: " + lastZxidSeen + ", lastXid: " + lastXid + ", lastAck: " + lastAck + ", znodeName: " + znodeName);
+            log.info("Replica lastZxidSeen: " + chainRepDriver.lastZxidSeen);
 
+            //If the zk view of the contacting replica is stale, ignore request
             if (lastZxidSeen < chainRepDriver.lastZxidSeen) {
-                log.info("replica has older view of zookeeper than me, ignoring request");
-                responseObserver.onNext(NewSuccessorResponse.newBuilder().setRc(-1).build());
-                responseObserver.onCompleted();
+                log.info("Replica contacting has a stale zk view, ignoring request");
+                rejectNewSuccRequest(responseObserver);
             }
+            //If the contacting replica has the same view as replica
             else if (lastZxidSeen == chainRepDriver.lastZxidSeen) {
-                log.info("my successorReplicaName: " + chainRepDriver.successorZNode);
+                log.info("Successor Replica Name: " + chainRepDriver.successorZNode);
+
+                //Check that the replica that has sent newSucc is supposed to be replica's successor
+                //As seen from the oracle (zk view)
                 if (Objects.equals(chainRepDriver.successorZNode, znodeName)) {
-                    successorProcedure(lastAck, lastXid, znodeName, responseObserver);
-                } else {
-                    log.info("replica is not the replica i saw in my view of zookeeper");
-                    responseObserver.onNext(NewSuccessorResponse.newBuilder().setRc(-1).build());
-                    responseObserver.onCompleted();
+                    getSuccUpToSpeed(lastAck, lastXid, znodeName, responseObserver);
+                }
+                //If the replica doesn't match oracle view
+                else {
+                    log.info("Replica does not match replica seen in zk view , ignoring request");
+                    rejectNewSuccRequest(responseObserver);
                 }
             }
+            // If the contacting replica has a more recent view of the chain than current replica
+            // Call sync before you process the newSucc request
             else {
-                log.info("replica has newer view of zookeeper than me, syncing request");
-                chainRepDriver.zk.sync(chainRepDriver.controlPath, (i, s, o) -> {
-                    if (i == Code.OK_VALUE && Objects.equals(chainRepDriver.successorZNode, znodeName)) {
-                        successorProcedure(lastAck, lastXid, znodeName, responseObserver);
+                log.info("Contacting replica has newer zk view, syncing request");
+                chainRepDriver.zk.sync(chainRepDriver.zkDataDir, (result, extra1, extra2) -> {
+                    if (result == Code.OK_VALUE && Objects.equals(chainRepDriver.successorZNode, znodeName)) {
+                        getSuccUpToSpeed(lastAck, lastXid, znodeName, responseObserver);
                     }
                 }, null);
             }
@@ -110,19 +125,34 @@ public class ReplicaService extends ReplicaGrpc.ReplicaImplBase {
         }
     }
 
-    public void successorProcedure(int lastAck, int lastXid, String znodeName, StreamObserver<NewSuccessorResponse> responseObserver) {
-        //TODO:REFACTOR
+
+    /**
+     * <pre></pre>
+     *
+     * @param lastAck           : Last Ack'd transaction from candidate newSucc
+     * @param lastXid           : Last Xid seen from candidate newSucc
+     * @param znodeName         :Name of candidate newSucc
+     * @param responseObserver: corresponding responseObserver for the newSucc request
+     *
+     * <p></p>
+     *                          <post>
+     *                          Driver logic for handling a new successor once we have determined that it is a valid
+     *                          candidate for being replica's new successor
+     *                          </post>
+     */
+    public void getSuccUpToSpeed(int lastAck, int lastXid, String znodeName, StreamObserver<NewSuccessorResponse> responseObserver) {
+
         NewSuccessorResponse.Builder builder = NewSuccessorResponse.newBuilder();
         builder.setRc(1);
 
-        //If lastXid is -1, send all state
+        //If lastXid is -1, do a state transfer
         if (lastXid == -1) {
             builder.setRc(0)
                     .putAllState(chainRepDriver.replicaMap);
         }
 
-        // send update request starting from their lastXid + 1 till your lastXid
-        for (int xid = lastXid + 1; xid <= chainRepDriver.lastUpdateRequestXid; xid += 1) {
+        // Otherwise, send successor all the requests it has missed
+        for (int xid = lastXid + 1; xid <= chainRepDriver.lastXidSeen; xid += 1) {
             if (chainRepDriver.pendingUpdateRequests.containsKey(xid)) {
                 builder.addSent(UpdateRequest.newBuilder()
                         .setXid(xid)
@@ -132,62 +162,67 @@ public class ReplicaService extends ReplicaGrpc.ReplicaImplBase {
             }
         }
 
-        // ack back request start from your lastAck till their last ack
-        for (int myAckXid = chainRepDriver.lastAckXid + 1; myAckXid <= lastAck; myAckXid += 1) {
+        // Ack requests that they have acked since they are your successor now
+        for (int myAckXid = chainRepDriver.lastAckSeen + 1; myAckXid <= lastAck; myAckXid += 1) {
             chainRepDriver.ack(myAckXid);
         }
 
-        builder.setLastXid(chainRepDriver.lastUpdateRequestXid);
+        builder.setLastXid(chainRepDriver.lastXidSeen);
 
-        log.info("response values:");
-        log.info(
-                "rc: " + builder.getRc() +
-                        ", lastXid: " + builder.getLastXid() +
-                        ", state: " + builder.getStateMap() +
-                        ", sent: " + builder.getSentList());
+        log.info("Values in the newSucc response:");
+        log.info("rc: " + builder.getRc() + ", lastXid: " + builder.getLastXid() + ", state: " + builder.getStateMap() + ", sent: " + builder.getSentList());
 
         try {
-            String data = new String(chainRepDriver.zk.getData(chainRepDriver.controlPath + "/" + znodeName, false, null));
-            chainRepDriver.successorAddress = data.split("\n")[0];
+            //Open a channel between replica and its successor for communication
+            String zkData = new String(chainRepDriver.zk.getData(chainRepDriver.zkDataDir + "/" + znodeName, false, null));
+            chainRepDriver.successorAddress = zkData.split("\n")[0];
             chainRepDriver.successorChannel = chainRepDriver.createChannel(chainRepDriver.successorAddress);
-            log.info("new successor");
-            log.info("successorAddress: " + chainRepDriver.successorAddress);
-            log.info("successor name: " + data.split("\n")[1]);
+            log.info("New Successor Established");
+            log.info("Successor Address: " + chainRepDriver.successorAddress);
+            log.info("Successor Name: " + zkData.split("\n")[1]);
         } catch (InterruptedException | KeeperException e) {
             log.info("error in getting successor address from zookeeper");
         }
+        //Important!
         chainRepDriver.successorContacted = true;
         responseObserver.onNext(builder.build());
         responseObserver.onCompleted();
     }
 
     /**
-     * @param request
-     * @param responseObserver
+     * @param request          : AckRequest received by replica
+     * @param responseObserver : Corresponding requestObserver
      */
     @Override
     public void ack(AckRequest request, StreamObserver<AckResponse> responseObserver) {
-        //TODO: REFACTOR
         try {
-            log.info("trying to acquire semaphore in ack");
+            //Use a semaphore to work around the sync block of the request loop in inc, etc
+            log.info("Ack called. Trying to acquire ack semaphore");
             chainRepDriver.ackSemaphore.acquire();
-            log.info("ack grpc called");
-            int xid = request.getXid();
+            int requestXid = request.getXid();
+            log.info("xid: " + requestXid);
 
-            log.info("xid: " + xid);
-
-            if (chainRepDriver.isHead) {
-                chainRepDriver.lastAckXid = xid;
-                log.info("sending response back to client");
-                StreamObserver<HeadResponse> headResponseStreamObserver = chainRepDriver.pendingUpdateRequests.get(xid).getObserver();
-                chainRepDriver.pendingUpdateRequests.remove(xid);
-                headResponseStreamObserver.onNext(HeadResponse.newBuilder().setRc(0).build());
-                headResponseStreamObserver.onCompleted();
-            } else {
-                chainRepDriver.ack(xid);
-            }
+            log.info("Completing responseObserver with XID " + requestXid);
             responseObserver.onNext(AckResponse.newBuilder().build());
             responseObserver.onCompleted();
+            log.info("Done");
+
+
+            //If replica is head, send a response back to client
+            if (chainRepDriver.isHead) {
+                chainRepDriver.lastAckSeen = requestXid;
+                log.info("sending response back to client");
+                StreamObserver<HeadResponse> headResponseStreamObserver = chainRepDriver.pendingUpdateRequests.get(requestXid).getObserver();
+                chainRepDriver.pendingUpdateRequests.remove(requestXid);
+                headResponseStreamObserver.onNext(HeadResponse.newBuilder().setRc(0).build());
+                headResponseStreamObserver.onCompleted();
+            }
+            //Otherwise, ack the request back to predecessor
+            else {
+                chainRepDriver.ack(requestXid);
+            }
+
+
         } catch (InterruptedException e) {
             log.info("Problem acquiring semaphore");
             log.info(e.getMessage());
@@ -195,6 +230,13 @@ public class ReplicaService extends ReplicaGrpc.ReplicaImplBase {
             log.info("releasing semaphore for ack");
             chainRepDriver.ackSemaphore.release();
         }
+    }
+
+    // Util methods
+
+    private static void rejectNewSuccRequest(StreamObserver<NewSuccessorResponse> responseObserver) {
+        responseObserver.onNext(NewSuccessorResponse.newBuilder().setRc(-1).build());
+        responseObserver.onCompleted();
     }
 }
 

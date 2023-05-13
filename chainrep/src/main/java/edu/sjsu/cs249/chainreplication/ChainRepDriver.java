@@ -10,6 +10,7 @@ import org.apache.zookeeper.*;
 import org.apache.zookeeper.data.Stat;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -23,14 +24,14 @@ public class ChainRepDriver {
     String name;
     String grpcHostPort;
     String serverList;
-    String controlPath;
+    String zkDataDir;
     ZooKeeper zk;
     boolean isHead;
     boolean isTail;
     long lastZxidSeen;
-    int lastUpdateRequestXid;
-    int lastAckXid;
-    String myZNodeName;
+    int lastXidSeen;
+    int lastAckSeen;
+    String replicaZkName;
     String predecessorAddress;
     String successorAddress;
     String successorZNode;
@@ -39,7 +40,7 @@ public class ChainRepDriver {
     HashMap <String, Integer> replicaMap;
     List<String> replicas;
 
-    HashMap<Integer, StreamObserver<HeadResponse>> pendingHeadStreamObserver;
+    HashMap<Integer, StreamObserver<HeadResponse>> pendingHeadRequestStreamObserverMap;
 
     HashMap <Integer, Triple> pendingUpdateRequests;
 
@@ -49,48 +50,53 @@ public class ChainRepDriver {
     final Semaphore ackSemaphore;
 
 
-    ChainRepDriver(String name, String grpcHostPort, String zookeeper_server_list, String control_path) {
+    ChainRepDriver(String name, String grpcHostPort, String serverList, String ZkDataDir) {
         this.name = name;
         this.grpcHostPort = grpcHostPort;
-        this.serverList = zookeeper_server_list;
-        this.controlPath = control_path;
+        this.serverList = serverList;
+        this.zkDataDir = ZkDataDir;
         isHead = false;
         isTail = false;
         lastZxidSeen = -1;
-        lastUpdateRequestXid = -1;
-        lastAckXid = -1;
+        lastXidSeen = -1;
+        lastAckSeen = -1;
         successorAddress = "";
         successorZNode = "";
-        pendingHeadStreamObserver = new HashMap<>();
+        pendingHeadRequestStreamObserverMap = new HashMap<>();
         replicaMap = new HashMap<>();
         successorContacted = false;
         pendingUpdateRequests = new HashMap<>();
         ackSemaphore = new Semaphore(1);
     }
-    void start () throws IOException, InterruptedException, KeeperException {
+    void startReplica() throws IOException, InterruptedException, KeeperException {
         zk = new ZooKeeper(serverList, 10000, System.out::println);
-        myZNodeName = zk.create(controlPath + "/replica-", (grpcHostPort + "\n" + name).getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
-        log.info("Created znode name: " + myZNodeName);
+        replicaZkName = zk.create(zkDataDir + "/replica-", (grpcHostPort + "\n" + name).getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+        log.info("Created znode name: " + replicaZkName);
 
         //Remove control path from name
-        myZNodeName = myZNodeName.replace(controlPath + "/", "");
+        replicaZkName = replicaZkName.replace(zkDataDir + "/", "");
 
+        //Crucial Steps: Check path and check whether replica is head or tail
         this.getChildrenInPath();
         this.checkMembership();
 
+        //Attach GRPC services
         HeadService headServer = new HeadService(this);
-        TailService tailServer = new TailService(this);
         ReplicaService replicaServer = new ReplicaService(this);
+        TailService tailServer = new TailService(this);
         DebugService debugServer = new DebugService(this);
 
         Server server = ServerBuilder.forPort(Integer.parseInt(grpcHostPort.split(":")[1]))
                 .addService(headServer)
-                .addService(tailServer)
                 .addService(replicaServer)
+                .addService(tailServer)
                 .addService(debugServer)
                 .build();
         server.start();
-        log.info(String.format("will listen on port %s\n", server.getPort()));
+
+        log.info(String.format("listening on port %s\n", server.getPort()));
+
+        //Shutdown logic
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 zk.close();
@@ -99,32 +105,33 @@ public class ChainRepDriver {
                 e.printStackTrace();
             }
             server.shutdown();
-            log.info("Successfully stopped the server");
+            log.info("Successfully stopped server");
         }));
         server.awaitTermination();
     }
 
-    //TODO: REFACTOR
-    private Watcher childrenWatcher() {
+    private Watcher datadirWatcher() {
         return watchedEvent -> {
-            log.info("childrenWatcher triggered");
-            log.info("WatchedEvent: " + watchedEvent.getType() + " on " + watchedEvent.getPath());
+            log.info("datadirWatcher triggered");
+            log.info("WatchedEvent: " + watchedEvent.getType() + " path " + watchedEvent.getPath());
             try {
                 ChainRepDriver.this.getChildrenInPath();
                 ChainRepDriver.this.checkMembership();
             } catch (InterruptedException | KeeperException e) {
-                log.info("Error getting children with getChildrenInPath()");
+                log.info("Error getting children with getChildrenInPath() or checkMembership()");
             }
         };
     }
 
     //Set up a watcher on the path to watch children changes
     private void getChildrenInPath() throws InterruptedException, KeeperException {
-        Stat replicaPath = new Stat();
-        List<String> children = zk.getChildren(controlPath, childrenWatcher(), replicaPath);
-        lastZxidSeen = replicaPath.getPzxid();
+        Stat datadirPath = new Stat();
+        List<String> children = zk.getChildren(zkDataDir, datadirWatcher(), datadirPath);
+        lastZxidSeen = datadirPath.getPzxid();
+
+        //Update list of replicas that the replica knows of
         replicas = children.stream().filter(child -> child.contains("replica-")).toList();
-        log.info("Current replicas: " + replicas + ", lastZxidSeen: " + lastZxidSeen);
+        log.info("Current replicas seen: " + replicas + ", lastZxidSeen: " + lastZxidSeen);
     }
 
     //To track head and tail status
@@ -134,18 +141,21 @@ public class ChainRepDriver {
         List<String> replicaList = replicas.stream().sorted(Comparator.naturalOrder()).toList();
 
         //Check if you are head or tail
-        isHead = replicaList.get(0).equals(myZNodeName);
-        isTail = replicaList.get(replicaList.size() - 1).equals(myZNodeName);
+        synchronized (this) {
+            isHead = replicaList.get(0).equals(replicaZkName);
+            isTail = replicaList.get(replicaList.size() - 1).equals(replicaZkName);
 
-        log.info("isHead: " + isHead + ", isTail: " + isTail);
+            log.info("isHead: " + isHead + ", isTail: " + isTail);
 
-        callPredecessor(replicaList);
-        setSuccessorData(replicaList);
+            callPredecessor(replicaList);
+            checkSuccs(replicaList);
+        }
     }
 
     void callPredecessor(List<String> sortedReplicas) throws InterruptedException, KeeperException {
-        //TODO: Refactor
-        //Don't need to call predecessor if you're head! Reset predecessor values
+        //If you are head, you don't have a predecessor
+
+        //If you are freshly made head,
         if (isHead) {
             if (predecessorChannel != null) {
                 predecessorChannel.shutdownNow();
@@ -156,35 +166,31 @@ public class ChainRepDriver {
 
         log.info("calling pred");
 
-        int index = sortedReplicas.indexOf(myZNodeName);
+        int index = sortedReplicas.indexOf(replicaZkName);
         String predecessorReplicaName = sortedReplicas.get(index - 1);
 
-        String data = new String(zk.getData(controlPath + "/" + predecessorReplicaName, false, null));
+        String data = new String(zk.getData(zkDataDir + "/" + predecessorReplicaName, false, null));
 
         String newPredecessorAddress = data.split("\n")[0];
         String newPredecessorName = data.split("\n")[1];
 
         // If last predecessor is not the same as the last one, then call the new one!
         if (!newPredecessorAddress.equals(predecessorAddress)) {
-            log.info("new predecessor");
-            log.info("newPredecessorAddress: " + newPredecessorAddress);
-            log.info("newPredecessorName: " + newPredecessorName);
+            for (String s : Arrays.asList("Calling New Predecessor at", "newPredecessorAddress: " + newPredecessorAddress, "newPredecessorName: " + newPredecessorName)) {
+                log.info(s);
+            }
 
-            log.info("calling newSuccessor of new predecessor.");
-            log.info("params:" +
-                    ", lastZxidSeen: " + lastZxidSeen +
-                    ", lastXid: " + lastUpdateRequestXid +
-                    ", lastAck: " + lastAckXid +
-                    ", myReplicaName: " + myZNodeName);
+            log.info("Calling newSuccessor with values");
+            log.info( "lastZxidSeen: " + lastZxidSeen + ", lastXid: " + lastXidSeen + ", lastAck: " + lastAckSeen + ", myReplicaName: " + replicaZkName);
 
             predecessorAddress = newPredecessorAddress;
             predecessorChannel = this.createChannel(predecessorAddress);
             var stub = ReplicaGrpc.newBlockingStub(predecessorChannel);
             var newSuccessorRequest = NewSuccessorRequest.newBuilder()
                     .setLastZxidSeen(lastZxidSeen)
-                    .setLastXid(lastUpdateRequestXid)
-                    .setLastAck(lastAckXid)
-                    .setZnodeName(myZNodeName).build();
+                    .setLastXid(lastXidSeen)
+                    .setLastAck(lastAckSeen)
+                    .setZnodeName(replicaZkName).build();
             NewSuccessorResponse newSuccessorResponse = stub.newSuccessor(newSuccessorRequest);
             long rc = newSuccessorResponse.getRc();
             log.info("Response received");
@@ -194,62 +200,64 @@ public class ChainRepDriver {
                     getChildrenInPath();
                     checkMembership();
                 } catch (InterruptedException | KeeperException e) {
-                    log.info("Error getting children with getChildrenInPath()");
+                    log.info("Error getting children with getChildrenInPath() or checkMembership");
                 }
             } else if (rc == 0) {
-                lastUpdateRequestXid = newSuccessorResponse.getLastXid();
-                log.info("lastUpdateRequestXid: " + lastUpdateRequestXid);
-                log.info("state value:");
+                lastXidSeen = newSuccessorResponse.getLastXid();
+                log.info("Last Xid Seen: " + lastXidSeen);
+                log.info("Replica Map is:");
                 for (String key : newSuccessorResponse.getStateMap().keySet()) {
                     replicaMap.put(key, newSuccessorResponse.getStateMap().get(key));
                     log.info(key + ": " + newSuccessorResponse.getStateMap().get(key));
                 }
-                addPendingUpdateRequests(newSuccessorResponse);
+                attachPendingUpdateRequests(newSuccessorResponse);
             } else {
-                lastUpdateRequestXid = newSuccessorResponse.getLastXid();
-                log.info("lastUpdateRequestXid: " + lastUpdateRequestXid);
-                addPendingUpdateRequests(newSuccessorResponse);
+                lastXidSeen = newSuccessorResponse.getLastXid();
+                log.info("lastUpdateRequestXid: " + lastXidSeen);
+                attachPendingUpdateRequests(newSuccessorResponse);
             }
         }
     }
 
-    void setSuccessorData(List<String> sortedReplicas) {
-        //TODO: REFACTOR
-        if (isTail) {
+    void checkSuccs(List<String> sortedReplicas) {
+        //If replica isn't tail, only then it will have a successor
+        if(!isTail) {
+            int index = sortedReplicas.indexOf(replicaZkName);
+            String newSuccessorZNode = sortedReplicas.get(index + 1);
+
+            if (!newSuccessorZNode.equals(successorZNode)) {
+                successorZNode = newSuccessorZNode;
+                successorContacted = false;
+                log.info("new successor");
+                log.info("successorZNode: " + successorZNode);
+            }
+        }
+
+        //if replica is tail
+        else {
             successorZNode = "";
             successorAddress = "";
             successorContacted = false;
-            return;
-        }
-
-        int index = sortedReplicas.indexOf(myZNodeName);
-        String newSuccessorZNode = sortedReplicas.get(index + 1);
-
-        // If the curr successor replica name matches the new one,
-        // then hasSuccessorContacted should be the old value of hasSuccessorContacted
-        // else it should be false
-        if (!newSuccessorZNode.equals(successorZNode)) {
-            successorZNode = newSuccessorZNode;
-            successorContacted = false;
-            log.info("new successor");
-            log.info("successorZNode: " + successorZNode);
         }
     }
-    private void addPendingUpdateRequests(NewSuccessorResponse result) {
-        //TODO:REFAACTOR
-        List<UpdateRequest> sent = result.getSentList();
-        log.info("sent requests: ");
-        for (UpdateRequest request : sent) {
-            String key = request.getKey();
-            int newValue = request.getNewValue();
-            int xid = request.getXid();
-            pendingUpdateRequests.put(xid, new Triple(key, newValue,null));
-            log.info("xid: " + xid + ", key: " + key + ", value: " + newValue);
+    private void attachPendingUpdateRequests(NewSuccessorResponse result) {
+        List<UpdateRequest> sentList = result.getSentList();
+        log.info("Adding Sent Requests: ");
+        for (UpdateRequest request : sentList) {
+            String requestKey = request.getKey();
+            int requestNewValue = request.getNewValue();
+            int requestXid = request.getXid();
+            pendingUpdateRequests.put(requestXid, new Triple(requestKey, requestNewValue,null));
+            log.info("xid: " + requestXid + ", key: " + requestKey + ", value: " + requestNewValue);
         }
 
         if (isTail && pendingUpdateRequests.size() > 0) {
-            log.info("I am tail, have to ack back all pending requests!");
-            for (int xid: pendingUpdateRequests.keySet()) {
+            log.info("Replica is tail - ack all pending requests");
+
+            //To prevent Concurrent Access Exceptions, use a dummy object
+            HashMap <Integer, Triple> dummyPendingRequests = new HashMap<>(pendingUpdateRequests);
+
+            for (int xid: dummyPendingRequests.keySet()) {
                 ack(xid);
             }
         }
@@ -271,9 +279,9 @@ public class ChainRepDriver {
         log.info("Sending ack to predecessor: " + predecessorAddress);
 
         //Update the last acknowledged Xid and remove it from pending requests
-        lastAckXid = xid;
+        lastAckSeen = xid;
         pendingUpdateRequests.remove(xid);
-        log.info("lastAckXid: " + lastAckXid);
+        log.info("lastAckXid: " + lastAckSeen);
 
         //Send ack across the channel
         var channel = createChannel(predecessorAddress);
@@ -286,15 +294,12 @@ public class ChainRepDriver {
 
     public void updateSuccessor(String key, int newValue, int xid) {
         synchronized (this) {
-            log.info("making update call to successor: " + successorAddress);
-            log.info("params:" + ", xid: " + xid + ", key: " + key + ", newValue: " + newValue);
+            log.info("Updating Successor: " + successorAddress);
+            log.info(" xid: " + xid + ", key: " + key + ", newValue: " + newValue);
             var channel = createChannel(successorAddress);
             var stub = ReplicaGrpc.newBlockingStub(channel);
-            var updateRequest = UpdateRequest.newBuilder()
-                    .setXid(xid)
-                    .setKey(key)
-                    .setNewValue(newValue)
-                    .build();
+            var updateRequest = UpdateRequest.newBuilder().setXid(xid)
+                    .setKey(key).setNewValue(newValue).build();
             stub.update(updateRequest);
             channel.shutdownNow();
         }

@@ -16,47 +16,66 @@ public class DebugService extends ChainDebugGrpc.ChainDebugImplBase {
     }
 
     /**
-     * @param request: ChainDebugRequest received by replica
+     * @param request:         ChainDebugRequest received by replica
      * @param responseObserver : Corresponding responseObserver
      */
     @Override
     public void debug(ChainDebugRequest request, StreamObserver<ChainDebugResponse> responseObserver) {
-        //Add the current hashmap state as seen by the replica
-        ChainDebugResponse.Builder builder = ChainDebugResponse.newBuilder();
-        builder
-                .setXid(chainRepDriver.lastAckXid)
-                .putAllState(chainRepDriver.replicaMap);
+        //To avoid problems with --check-chain
+        synchronized (chainRepDriver) {
+            try {
 
-        //Add the pending requests as seen by the replica
-        for(int key: chainRepDriver.pendingUpdateRequests.keySet()) {
-            builder.addSent(UpdateRequest.newBuilder()
-                    .setXid(key)
-                    .setKey(chainRepDriver.pendingUpdateRequests.get(key).getMapKey())
-                    .setNewValue(chainRepDriver.pendingUpdateRequests.get(key).getMapVal())
-                    .build());
+                //Don't ack during debug because it might throw false errors
+                chainRepDriver.ackSemaphore.acquire();
+
+                //Add the current hashmap state as seen by the replica
+                ChainDebugResponse.Builder builder = ChainDebugResponse.newBuilder();
+                builder
+                        .setXid(chainRepDriver.lastXidSeen)
+                        .putAllState(chainRepDriver.replicaMap);
+
+                //Add the pending requests as seen by the replica
+                for (int key : chainRepDriver.pendingUpdateRequests.keySet()) {
+                    builder.addSent(UpdateRequest.newBuilder()
+                            .setXid(key)
+                            .setKey(chainRepDriver.pendingUpdateRequests.get(key).getMapKey())
+                            .setNewValue(chainRepDriver.pendingUpdateRequests.get(key).getMapVal())
+                            .build());
+                }
+                log.info("xid: " + builder.getXid() + ", state: " + builder.getStateMap() + ", sent: " + builder.getSentList());
+
+                responseObserver.onNext(builder.build());
+                responseObserver.onCompleted();
+            } catch (InterruptedException e) {
+                log.info("Problem acquiring semaphore");
+                log.info(e.getMessage());
+            } finally {
+                log.info("releasing semaphore for ack");
+                chainRepDriver.ackSemaphore.release();
+            }
         }
-        responseObserver.onNext(builder.build());
-        responseObserver.onCompleted();
     }
 
+
     /**
-     * @param request :ExitRequest seen by replica
+     * @param request          :ExitRequest seen by replica
      * @param responseObserver : Corresponding responseObserver
      */
     @Override
     public void exit(ExitRequest request, StreamObserver<ExitResponse> responseObserver) {
-        //Do a "Graceful" exit
+        //Do a "Graceful" exit - if you're exiting, don't do any other task
         synchronized (chainRepDriver) {
             try {
+                // Don't ack while exiting
                 chainRepDriver.ackSemaphore.acquire();
                 log.info("Exiting...");
                 responseObserver.onNext(ExitResponse.newBuilder().build());
                 responseObserver.onCompleted();
-                log.info("releasing semaphore");
+                log.info("Releasing Ack Semaphore - Goodbye!");
                 chainRepDriver.ackSemaphore.release();
                 System.exit(0);
             } catch (InterruptedException e) {
-                log.info("Problem acquiring semaphore");
+                log.info("Problem during exit");
                 log.info(e.getMessage());
             }
         }

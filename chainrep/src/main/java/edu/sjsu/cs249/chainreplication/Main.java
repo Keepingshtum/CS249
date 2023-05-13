@@ -29,7 +29,7 @@ public class Main {
 
         @Override
         public Integer call() throws Exception {
-            new ChainRepDriver(name, grpcHostPort, serverList, controlPath).start();
+            new ChainRepDriver(name, grpcHostPort, serverList, controlPath).startReplica();
             return 0;
         }
     }
