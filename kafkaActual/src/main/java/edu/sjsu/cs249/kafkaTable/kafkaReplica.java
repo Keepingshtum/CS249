@@ -116,6 +116,7 @@ public class kafkaReplica {
         snapshotConsumer = createConsumer(SNAPSHOT_TOPIC_NAME, 0L, MY_GROUP_ID+"2");
 
 
+        //TODO: Consume the latest snapshot
         consumeLatestSnapshot();
         //TODO: Enqueue yourself in the snapshot ordering topic
 
