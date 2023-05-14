@@ -39,6 +39,7 @@ edu/sjsu/cs249/kafkaTable/KafkaTableDebugGrpc$AsyncService.class
 edu/sjsu/cs249/kafkaTable/KafkaTableDebugResponse.class
 edu/sjsu/cs249/kafkaTable/ExitResponseOrBuilder.class
 edu/sjsu/cs249/kafkaTable/KafkaTableDebugGrpc$KafkaTableDebugMethodDescriptorSupplier.class
+edu/sjsu/cs249/kafkaTable/ConsumerDriver.class
 edu/sjsu/cs249/kafkaTable/KafkaTableDebugResponseOrBuilder.class
 edu/sjsu/cs249/kafkaTable/ExitResponse$Builder.class
 edu/sjsu/cs249/kafkaTable/SnapshotOrBuilder.class

@@ -3,25 +3,31 @@ package edu.sjsu.cs249.kafkaTable;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import org.apache.kafka.clients.consumer.*;
+import io.grpc.stub.StreamObserver;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.Semaphore;
 import java.util.logging.Logger;
 
 public class kafkaReplica {
-    static Logger log = Logger.getLogger(KafkaDebugGrpcService.class.getName());
+    static Logger log = Logger.getLogger(kafkaReplica.class.getName());
 
     Map<String, Integer> mainMap;
-    Set<ClientXid> seenXids;
+
+    Map<String, Integer> clientCounters;
     String kafkaHost;
     String replicaName;
     String grpcPort;
@@ -56,9 +62,16 @@ public class kafkaReplica {
     KafkaConsumer<String, byte[]> snapshotOrderingConsumer;
     KafkaConsumer<String, byte[]> snapshotConsumer;
 
-    public kafkaReplica(String kafkaHost, String replicaName,String grpcPort, int messageThreshold, String topicPrefix) {
+    // Keeping track of grpcs
+
+    Map<ClientXid, StreamObserver<IncResponse>> clientIncRequests;
+    Map<ClientXid,StreamObserver<GetResponse>> clientGetRequests;
+
+    public kafkaReplica(String kafkaHost, String replicaName, String grpcPort, int messageThreshold, String topicPrefix) {
         this.mainMap = new HashMap<>();
-        this.seenXids = new HashSet<>();
+        this.clientCounters = new HashMap<>();
+        this.clientIncRequests = new HashMap<>();
+        this.clientGetRequests = new HashMap<>();
         this.grpcPort = grpcPort;
         this.kafkaHost = kafkaHost;
         this.replicaName = replicaName;
@@ -99,11 +112,12 @@ public class kafkaReplica {
         }));
 
 
-        snapshotOrderingConsumer = createConsumer(SNAPSHOT_ORDERING_TOPIC_NAME, 0L, "snapshotOrdering");
-        snapshotConsumer = createConsumer(SNAPSHOT_TOPIC_NAME, 0L, "snapshot");
+        snapshotOrderingConsumer = createConsumer(SNAPSHOT_ORDERING_TOPIC_NAME, 0L, MY_GROUP_ID+"1");
+        snapshotConsumer = createConsumer(SNAPSHOT_TOPIC_NAME, 0L, MY_GROUP_ID+"2");
 
 
         //TODO: Consume the latest snapshot
+        consumeLatestSnapshot();
         //TODO: Enqueue yourself in the snapshot ordering topic
 
 //        Thread consumerThread = new Thread(() -> {
@@ -115,11 +129,13 @@ public class kafkaReplica {
 //            }
 //        });
 //        consumerThread.start();
+        ConsumerDriver consumerDriver = new ConsumerDriver(this);
+        consumerDriver.start();
         server.awaitTermination();
 
     }
 
-    public KafkaConsumer<String, byte[]> createConsumer(String topicName,long offset, String groupID) throws InterruptedException, InvalidProtocolBufferException {
+    public KafkaConsumer<String, byte[]> createConsumer(String topicName, long offset, String groupID) throws InterruptedException, InvalidProtocolBufferException {
         var properties = new Properties();
         //TODO: Suffix fix - avoid that multiple topic problem with same groupID
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupID);
@@ -162,18 +178,16 @@ public class kafkaReplica {
 //        }
     }
 
-    public void produceMessage(String topicName,byte[] bytes) {
+    public void produceOperationsMessage(String topicName, PublishedItem message) {
         // Set up Kafka producer properties
         Properties producerProps = new Properties();
         producerProps.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaHost);
-        producerProps.setProperty(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        producerProps.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
 
         // Create a Kafka producer instance
-        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps);
+        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps,new StringSerializer(),new ByteArraySerializer());
 
         //Create record to publish
-        var record = new ProducerRecord<String, byte[]>(topicName, bytes);
+        var record = new ProducerRecord<String, byte[]>(topicName, message.toByteArray());
 
         //Create a new thread to publish message
         Thread producerThread = new Thread(() -> {
@@ -183,6 +197,85 @@ public class kafkaReplica {
 
         producerThread.start();
 
+    }
+
+    //TODO: Validate
+    public void consumeLatestSnapshot() {
+        //Assumption: consumer is already subscribed to the topic
+        // Poll for new records
+        var records = snapshotConsumer.poll(Duration.ofSeconds(1));
+
+        // Find the latest snapshot message
+        Snapshot latestSnapshotRecord = null;
+        long currentOffset = -1;
+        for (var record : records) {
+            try {
+
+                if (latestSnapshotRecord == null || record.offset() > currentOffset) {
+                    latestSnapshotRecord = Snapshot.parseFrom(record.value());
+                    currentOffset = record.offset();
+                }
+            } catch (InvalidProtocolBufferException e) {
+                log.info("Error occured during consuming snapshot");
+                e.printStackTrace();
+            }
+
+        }
+
+        // Process the latest snapshot message
+        if (latestSnapshotRecord != null) {
+
+            log.info("Snapshot details");
+            log.info(latestSnapshotRecord.toString());
+            // Update state variables according to the snapshot
+            snapshotReplicaId = latestSnapshotRecord.getReplicaId();
+            //Set to 0 if offsets are -1, otherwise assign as normal
+            operationsOffset = (latestSnapshotRecord.getOperationsOffset() == -1) ? 0 : latestSnapshotRecord.getOperationsOffset();
+            snapshotOrderingOffset = (latestSnapshotRecord.getSnapshotOrderingOffset() == -1) ? 0 : latestSnapshotRecord.getSnapshotOrderingOffset();
+            //TODO: REPLACE THIS LOGIC TO GO THROUGH MAP ENTRIES SEQUENTIALLY
+            // IS THE ROOT CAUSE OF UNMODIFIABLE MAP EXCEPTION
+//            mainMap = latestSnapshotRecord.getTableMap();
+//            clientCounters = latestSnapshotRecord.getClientCountersMap();
+
+        } else {
+            log.info("ALERT! SNAPSHOT IS NULL!");
+        }
+    }
+
+
+    public void checkSnapshotOrdering(
+            KafkaProducer<String, byte[]> producer,
+            String topicName,
+            String replicaName,
+            long startingOffset
+    ) throws InvalidProtocolBufferException {
+
+        // Seek to the starting offset
+        snapshotOrderingConsumer.seek(new TopicPartition(topicName, 0), startingOffset);
+
+        // Poll for new records
+        var records = snapshotOrderingConsumer.poll(Duration.ofSeconds(1));
+
+        // Check for replicaName in the messages
+        boolean replicaNameExists = false;
+        for (var record : records) {
+            SnapshotOrdering snapshotOrderingMessage = SnapshotOrdering.parseFrom(record.value());
+            if (snapshotOrderingMessage.getReplicaId().contains(replicaName)) {
+                replicaNameExists = true;
+                break;
+            }
+        }
+
+        //TODO: CONFIRM YOU DON'T NEED TO CREATE A NEW PRODUCER
+
+        // If replicaName does not exist, publish a message with replicaName
+        if (!replicaNameExists) {
+            SnapshotOrdering message = SnapshotOrdering.newBuilder()
+                    .setReplicaId(replicaName)
+                    .build();
+
+            producer.send(new ProducerRecord<>(topicName, message.toByteArray()));
+        }
     }
 
 
