@@ -29,12 +29,7 @@ public class ConsumerDriver extends Thread {
         log.info("Spinning up consumers");
 
         try {
-            if(replicaInstance.operationsOffset == -1L){
-                replicaInstance.operationsConsumer = replicaInstance.createConsumer(OPERATIONS_TOPIC_NAME, 0, MY_GROUP_ID+"3");
-            }
-            else {
-                replicaInstance.operationsConsumer = replicaInstance.createConsumer(OPERATIONS_TOPIC_NAME, replicaInstance.operationsOffset, MY_GROUP_ID+"3");
-            }
+            replicaInstance.operationsConsumer = replicaInstance.createConsumer(OPERATIONS_TOPIC_NAME, replicaInstance.operationsOffset+1, MY_GROUP_ID+"3");
 
         } catch (InterruptedException | InvalidProtocolBufferException e) {
             log.info("Exception occurred in consumerDriver");

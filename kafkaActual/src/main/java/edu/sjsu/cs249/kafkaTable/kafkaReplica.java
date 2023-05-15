@@ -117,12 +117,14 @@ public class kafkaReplica {
         }));
 
 
-        snapshotOrderingConsumer = createConsumer(SNAPSHOT_ORDERING_TOPIC_NAME, 0L, MY_GROUP_ID + "1");
+
         snapshotConsumer = createConsumer(SNAPSHOT_TOPIC_NAME, 0L, MY_GROUP_ID + "2");
 
 
         //Consume the latest snapshot
         consumeLatestSnapshot();
+
+        snapshotOrderingConsumer = createConsumer(SNAPSHOT_ORDERING_TOPIC_NAME, snapshotOrderingOffset+1, MY_GROUP_ID + "1");
 
         //TODO: Enqueue yourself in the snapshot ordering topic
         checkSnapshotOrdering();
@@ -294,7 +296,7 @@ public class kafkaReplica {
             // Update state variables according to the snapshot
             snapshotReplicaId = latestSnapshotRecord.getReplicaId();
             //Set to 0 if offsets are -1, otherwise assign as normal
-            operationsOffset = (latestSnapshotRecord.getOperationsOffset() == -1) ? 0 : latestSnapshotRecord.getOperationsOffset();
+            operationsOffset =  latestSnapshotRecord.getOperationsOffset();
             snapshotOrderingOffset = latestSnapshotRecord.getSnapshotOrderingOffset();
 
 
