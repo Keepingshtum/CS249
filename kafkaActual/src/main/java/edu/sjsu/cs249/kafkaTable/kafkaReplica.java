@@ -4,9 +4,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -32,6 +30,8 @@ public class kafkaReplica {
     String replicaName;
     String grpcPort;
     int messageThreshold;
+
+    int groupIDSuffix;
 
     String topicPrefix;
 
@@ -65,7 +65,7 @@ public class kafkaReplica {
     // Keeping track of grpcs
 
     Map<ClientXid, StreamObserver<IncResponse>> clientIncRequests;
-    Map<ClientXid,StreamObserver<GetResponse>> clientGetRequests;
+    Map<ClientXid, StreamObserver<GetResponse>> clientGetRequests;
 
     public kafkaReplica(String kafkaHost, String replicaName, String grpcPort, int messageThreshold, String topicPrefix) {
         this.mainMap = new HashMap<>();
@@ -83,6 +83,7 @@ public class kafkaReplica {
         snapshotOrderingOffset = -1;
         operationsOffset = -1;
         snapshotReplicaId = "";
+        groupIDSuffix = 0;
     }
 
     public void startup() throws IOException, InterruptedException {
@@ -103,6 +104,11 @@ public class kafkaReplica {
             try {
                 //Stop further operations
                 opSem.acquire();
+
+                //For faster shutdown and rejoin
+                this.operationsConsumer.unsubscribe();
+                this.snapshotConsumer.unsubscribe();
+                this.snapshotOrderingConsumer.unsubscribe();
             } catch (Exception e) {
                 log.info("Error while closing Kafka instance or acquiring semaphore");
                 e.printStackTrace();
@@ -112,23 +118,17 @@ public class kafkaReplica {
         }));
 
 
-        snapshotOrderingConsumer = createConsumer(SNAPSHOT_ORDERING_TOPIC_NAME, 0L, MY_GROUP_ID+"1");
-        snapshotConsumer = createConsumer(SNAPSHOT_TOPIC_NAME, 0L, MY_GROUP_ID+"2");
+        snapshotOrderingConsumer = createConsumer(SNAPSHOT_ORDERING_TOPIC_NAME, 0L, MY_GROUP_ID + "1");
+        snapshotConsumer = createConsumer(SNAPSHOT_TOPIC_NAME, 0L, MY_GROUP_ID + "2");
 
 
-        //TODO: Consume the latest snapshot
+        //Consume the latest snapshot
         consumeLatestSnapshot();
-        //TODO: Enqueue yourself in the snapshot ordering topic
 
-//        Thread consumerThread = new Thread(() -> {
-//            try {
-//                createConsumer(VT_TOPIC_NAME,MY_GROUP_ID);
-//            } catch (InterruptedException | InvalidProtocolBufferException e) {
-//                log.info("Error in consumer thread");
-//                e.printStackTrace();
-//            }
-//        });
-//        consumerThread.start();
+        //TODO: Enqueue yourself in the snapshot ordering topic
+        checkSnapshotOrdering();
+
+        //Create new thread to handle consuming of operations topic
         ConsumerDriver consumerDriver = new ConsumerDriver(this);
         consumerDriver.start();
         server.awaitTermination();
@@ -137,8 +137,9 @@ public class kafkaReplica {
 
     public KafkaConsumer<String, byte[]> createConsumer(String topicName, long offset, String groupID) throws InterruptedException, InvalidProtocolBufferException {
         var properties = new Properties();
-        //TODO: Suffix fix - avoid that multiple topic problem with same groupID
-        properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupID);
+        //Suffix fix - avoid that multiple topic problem with same groupID
+        groupIDSuffix += 1;
+        properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupID + groupIDSuffix);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         properties.setProperty(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "10000");
@@ -159,23 +160,46 @@ public class kafkaReplica {
                 sem.release();
             }
         });
+        //Prepoll to set up connection
         log.info("first poll count: " + consumer.poll(0).count());
         sem.acquire();
         log.info("Ready to consume at " + new Date());
         return consumer;
-//        while (true) {
-//            var records = consumer.poll(Duration.ofSeconds(20));
-//            log.info("Got: " + records.count());
-//            for (var record: records) {
-//                log.info(record.headers().toString());
-//                log.info(String.valueOf(record.timestamp()));
-//                log.info(String.valueOf(record.timestampType()));
-//                log.info(String.valueOf(record.offset()));
-//                // If you want to read plaintext messages, use below line instead
-////                var message = SimpleMessage.parseFrom(record.value());
-//                var publishedItem = PublishedItem.parseFrom(record.value());
-//                log.info(publishedItem.toString());
-//        }
+    }
+
+    public void checkAndTakeSnapshot() {
+        // Increment the offset by one and check if it is your turn to snapshot now
+        this.snapshotOrderingConsumer.seek(new TopicPartition(this.SNAPSHOT_ORDERING_TOPIC_NAME, 0), snapshotOrderingOffset+1);
+//        this.snapshotOrderingConsumer.poll(Duration.ofSeconds(0));
+
+        //This time, we will actually define our records instead of using vars!
+        ConsumerRecords<String, byte[]> records = this.snapshotOrderingConsumer.poll(Duration.ofSeconds(1));
+        Iterator topicIterator = records.iterator();
+
+        if (topicIterator.hasNext()) {
+            ConsumerRecord<String, byte[]> record = (ConsumerRecord<String, byte[]>) topicIterator.next();
+            log.info("Polling Snapshot Ordering to see if it's my turn");
+            try {
+                SnapshotOrdering message = SnapshotOrdering.parseFrom(record.value());
+                //Update state info
+                snapshotOrderingOffset = record.offset();
+                log.info("snapshotOrderingOffset: " + snapshotOrderingOffset);
+                log.info("Current name pulled: " + message.getReplicaId());
+                if (message.getReplicaId().equals(replicaName)) {
+                    log.info("It's a-me! Publishing snap");
+                    Snapshot snap = Snapshot.newBuilder().setReplicaId(replicaName).putAllTable(mainMap).setOperationsOffset(operationsOffset)
+                            .putAllClientCounters(clientCounters).setSnapshotOrderingOffset(snapshotOrderingOffset).build();
+                    produceSnapshotMessage(SNAPSHOT_TOPIC_NAME, snap);
+                    produceSnapshotOrderingMessage(SNAPSHOT_ORDERING_TOPIC_NAME, SnapshotOrdering.newBuilder().setReplicaId(replicaName).build());
+                } else {
+                    log.info("Not me this time. This guy should be publishing ->" + message.getReplicaId());
+                }
+            } catch (InvalidProtocolBufferException e) {
+                log.info("Unable to parse value: " + e);
+            }
+        } else {
+            log.info("No records lol");
+        }
     }
 
     public void produceOperationsMessage(String topicName, PublishedItem message) {
@@ -184,7 +208,7 @@ public class kafkaReplica {
         producerProps.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaHost);
 
         // Create a Kafka producer instance
-        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps,new StringSerializer(),new ByteArraySerializer());
+        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps, new StringSerializer(), new ByteArraySerializer());
 
         //Create record to publish
         var record = new ProducerRecord<String, byte[]>(topicName, message.toByteArray());
@@ -199,7 +223,48 @@ public class kafkaReplica {
 
     }
 
-    //TODO: Validate
+    public void produceSnapshotMessage(String topicName, Snapshot message) {
+        // Set up Kafka producer properties
+        Properties producerProps = new Properties();
+        producerProps.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaHost);
+
+        // Create a Kafka producer instance
+        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps, new StringSerializer(), new ByteArraySerializer());
+
+        //Create record to publish
+        var record = new ProducerRecord<String, byte[]>(topicName, message.toByteArray());
+
+        //Create a new thread to publish message
+        Thread producerThread = new Thread(() -> {
+            producer.send(record);
+            log.info("Published to " + topicName);
+        });
+
+        producerThread.start();
+
+    }
+
+    public void produceSnapshotOrderingMessage(String topicName, SnapshotOrdering message) {
+        // Set up Kafka producer properties
+        Properties producerProps = new Properties();
+        producerProps.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaHost);
+
+        // Create a Kafka producer instance
+        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps, new StringSerializer(), new ByteArraySerializer());
+
+        //Create record to publish
+        var record = new ProducerRecord<String, byte[]>(topicName, message.toByteArray());
+
+        //Create a new thread to publish message
+        Thread producerThread = new Thread(() -> {
+            producer.send(record);
+            log.info("Published to " + topicName);
+        });
+
+        producerThread.start();
+
+    }
+
     public void consumeLatestSnapshot() {
         //Assumption: consumer is already subscribed to the topic
         // Poll for new records
@@ -232,10 +297,24 @@ public class kafkaReplica {
             //Set to 0 if offsets are -1, otherwise assign as normal
             operationsOffset = (latestSnapshotRecord.getOperationsOffset() == -1) ? 0 : latestSnapshotRecord.getOperationsOffset();
             snapshotOrderingOffset = (latestSnapshotRecord.getSnapshotOrderingOffset() == -1) ? 0 : latestSnapshotRecord.getSnapshotOrderingOffset();
-            //TODO: REPLACE THIS LOGIC TO GO THROUGH MAP ENTRIES SEQUENTIALLY
-            // IS THE ROOT CAUSE OF UNMODIFIABLE MAP EXCEPTION
-//            mainMap = latestSnapshotRecord.getTableMap();
-//            clientCounters = latestSnapshotRecord.getClientCountersMap();
+
+
+            //We have to iterate through each record in the snapshot map individually
+            //Otherwise the map becomes immutable and leads to errors!
+            Iterator snapIterator = latestSnapshotRecord.getTableMap().keySet().iterator();
+            String key;
+            while (snapIterator.hasNext()) {
+                key = (String) snapIterator.next();
+                this.mainMap.put(key, latestSnapshotRecord.getTableMap().get(key));
+            }
+
+            this.operationsOffset = latestSnapshotRecord.getOperationsOffset();
+            snapIterator = latestSnapshotRecord.getClientCountersMap().keySet().iterator();
+
+            while (snapIterator.hasNext()) {
+                key = (String) snapIterator.next();
+                this.clientCounters.put(key, latestSnapshotRecord.getClientCountersMap().get(key));
+            }
 
         } else {
             log.info("ALERT! SNAPSHOT IS NULL!");
@@ -243,40 +322,39 @@ public class kafkaReplica {
     }
 
 
-    public void checkSnapshotOrdering(
-            KafkaProducer<String, byte[]> producer,
-            String topicName,
-            String replicaName,
-            long startingOffset
-    ) throws InvalidProtocolBufferException {
+    public void checkSnapshotOrdering() {
+        //TODO: Modify to work with joining in the middle
+        ConsumerRecords<String, byte[]> records = snapshotOrderingConsumer.poll(Duration.ofSeconds(1L));
+        Iterator snapshotOrderingIterator = records.iterator();
 
-        // Seek to the starting offset
-        snapshotOrderingConsumer.seek(new TopicPartition(topicName, 0), startingOffset);
-
-        // Poll for new records
-        var records = snapshotOrderingConsumer.poll(Duration.ofSeconds(1));
-
-        // Check for replicaName in the messages
-        boolean replicaNameExists = false;
-        for (var record : records) {
-            SnapshotOrdering snapshotOrderingMessage = SnapshotOrdering.parseFrom(record.value());
-            if (snapshotOrderingMessage.getReplicaId().contains(replicaName)) {
-                replicaNameExists = true;
-                break;
+        //Check if you are already queued up
+        while (snapshotOrderingIterator.hasNext()) {
+            ConsumerRecord<String, byte[]> record = (ConsumerRecord<String, byte[]>) snapshotOrderingIterator.next();
+            try {
+                SnapshotOrdering message = SnapshotOrdering.parseFrom(record.value());
+                if (message.getReplicaId().equals(replicaName)) {
+                    //ALready queued - do nothing!
+                    log.info("Found myself - no need to do anything now");
+                    return;
+                }
+            } catch (InvalidProtocolBufferException e) {
+                log.info("Error occured during snapshot ordering processing: " + e);
+                e.printStackTrace();
             }
         }
-
-        //TODO: CONFIRM YOU DON'T NEED TO CREATE A NEW PRODUCER
-
-        // If replicaName does not exist, publish a message with replicaName
-        if (!replicaNameExists) {
-            SnapshotOrdering message = SnapshotOrdering.newBuilder()
-                    .setReplicaId(replicaName)
-                    .build();
-
-            producer.send(new ProducerRecord<>(topicName, message.toByteArray()));
-        }
+        //Otherwise, queue up
+        log.info("Didn't find myself - queueing up");
+        SnapshotOrdering snapshotOrderingMessage = SnapshotOrdering.newBuilder().setReplicaId(replicaName).build();
+        produceSnapshotOrderingMessage(kafkaReplica.SNAPSHOT_ORDERING_TOPIC_NAME, snapshotOrderingMessage);
     }
 
+    public boolean isValidRequest(ClientXid xid) {
+        if (clientCounters.containsKey(xid.getClientid())) {
+            if (clientCounters.get(xid.getClientid()) >= xid.getCounter()) {
+                return false;
+            }
 
+        }
+        return true;
+    }
 }

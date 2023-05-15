@@ -25,29 +25,25 @@ public class MainKafkaGrpcService extends KafkaTableGrpc.KafkaTableImplBase {
     public void inc(IncRequest request, StreamObserver<IncResponse> responseObserver) {
         ClientXid xid = request.getXid();
         // if the replica has seen the request before, just ignore
-        if (replicaInstance.clientCounters.containsKey(xid.getClientid())) {
-            //TODO: May be a bug, revisit correctness of condition
-            if (replicaInstance.clientCounters.get(xid.getClientid()) >= xid.getCounter()) {
+        if (!replicaInstance.isValidRequest(xid)) {
                 // ignore the inc request , just respond back
                 log.info("Client already has a request outstanding, or we have already processed a newer request. Ignoring.");
                 IncResponse response = IncResponse.newBuilder().build();
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
-            }
+                return;
 
-        } else {
-
-            //Otherwise, update the seen Xids list, and queue a message in the kafka topic
-            replicaInstance.clientIncRequests.put(xid, responseObserver);
-
-
-            // Produce a message for kafka
-            PublishedItem incPubItem = PublishedItem.newBuilder().setInc(request).build();
-            replicaInstance.produceOperationsMessage(kafkaReplica.OPERATIONS_TOPIC_NAME, incPubItem);
-
-            // Update client counters
-            replicaInstance.clientCounters.put(xid.getClientid(), xid.getCounter());
         }
+
+        //Otherwise, update the seen Xids list, and queue a message in the kafka topic
+        replicaInstance.clientIncRequests.put(xid, responseObserver);
+
+
+        // Produce a message for kafka
+        PublishedItem incPubItem = PublishedItem.newBuilder().setInc(request).build();
+        replicaInstance.produceOperationsMessage(kafkaReplica.OPERATIONS_TOPIC_NAME, incPubItem);
+
+        // Don't Update client counters - we'll do this once we consume and process the message
     }
 
     /**
@@ -60,27 +56,23 @@ public class MainKafkaGrpcService extends KafkaTableGrpc.KafkaTableImplBase {
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
         ClientXid xid = request.getXid();
-        if (replicaInstance.clientCounters.containsKey(xid.getClientid())) {
-            //TODO: May be a bug, revisit correctness of condition
-            if (replicaInstance.clientCounters.get(xid.getClientid()) >= xid.getCounter()) {
+        if (!replicaInstance.isValidRequest(xid)) {
                 // ignore the get request , just respond back
                 log.info("Client already has a request outstanding, or we have already processed a newer request. Ignoring.");
                 GetResponse response = GetResponse.newBuilder().build();
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
-            }
 
-        } else {
-            //Otherwise, update the seen Xids list, and queue a message in the kafka topic
-            replicaInstance.clientGetRequests.put(xid, responseObserver);
-
-            // Produce a message for kafka
-            PublishedItem getPubItem = PublishedItem.newBuilder().setGet(request).build();
-            replicaInstance.produceOperationsMessage(kafkaReplica.OPERATIONS_TOPIC_NAME, getPubItem);
-
-            // Update client counters
-            replicaInstance.clientCounters.put(xid.getClientid(), xid.getCounter());
         }
+        //Otherwise, update the seen Xids list, and queue a message in the kafka topic
+        replicaInstance.clientGetRequests.put(xid, responseObserver);
+
+        // Produce a message for kafka
+        PublishedItem getPubItem = PublishedItem.newBuilder().setGet(request).build();
+        replicaInstance.produceOperationsMessage(kafkaReplica.OPERATIONS_TOPIC_NAME, getPubItem);
+
+        //Don't Update client counters - we'll do this once we consume the message
+
 
     }
 }

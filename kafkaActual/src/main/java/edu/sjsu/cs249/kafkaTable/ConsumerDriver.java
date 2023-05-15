@@ -29,9 +29,15 @@ public class ConsumerDriver extends Thread {
         log.info("Spinning up consumers");
 
         try {
-            replicaInstance.operationsConsumer = replicaInstance.createConsumer(OPERATIONS_TOPIC_NAME, replicaInstance.operationsOffset, MY_GROUP_ID+"3");
+            if(replicaInstance.operationsOffset == -1L){
+                replicaInstance.operationsConsumer = replicaInstance.createConsumer(OPERATIONS_TOPIC_NAME, 0, MY_GROUP_ID+"3");
+            }
+            else {
+                replicaInstance.operationsConsumer = replicaInstance.createConsumer(OPERATIONS_TOPIC_NAME, replicaInstance.operationsOffset, MY_GROUP_ID+"3");
+            }
+
         } catch (InterruptedException | InvalidProtocolBufferException e) {
-            log.info("Exception occured in consumerDriver");
+            log.info("Exception occurred in consumerDriver");
             e.printStackTrace();
         }
 
@@ -57,7 +63,8 @@ public class ConsumerDriver extends Thread {
                         try {
                             message = PublishedItem.parseFrom(record.value());
                             log.info(String.valueOf(message));
-                            if (message.hasInc()) {
+                            if (message.hasInc() && replicaInstance.isValidRequest(message.getInc().getXid())) {
+                                //After this point, request is valid
                                 log.info("Processing Inc");
                                 IncRequest incRequest = message.getInc();
                                 if(replicaInstance.mainMap.containsKey(incRequest.getKey())){
@@ -72,21 +79,37 @@ public class ConsumerDriver extends Thread {
                                 // If a client asked this replica to do this request, respond once it is processed
                                 if(replicaInstance.clientIncRequests.containsKey(incRequest.getXid())) {
                                     IncResponse response = IncResponse.newBuilder().build();
-                                    StreamObserver<IncResponse> responseObserver = replicaInstance.clientIncRequests.get(incRequest.getXid());
+                                    StreamObserver<IncResponse> responseObserver = replicaInstance.clientIncRequests.remove(incRequest.getXid());
+                                    responseObserver.onNext(response);
+                                    responseObserver.onCompleted();
+                                }
+                                // Update client counters
+                                replicaInstance.clientCounters.put(incRequest.getXid().getClientid(), incRequest.getXid().getCounter());
+
+                            }
+                            else if(message.hasInc()) {
+                                //Request is not valid. Respond if you got the request and exit
+                                // If a client asked this replica to do this request, respond once it is processed
+                                log.info("Duplicate message received from Kafka -ignoring");
+                                IncRequest incRequest = message.getInc();
+                                if(replicaInstance.clientIncRequests.containsKey(incRequest.getXid())) {
+                                    IncResponse response = IncResponse.newBuilder().build();
+                                    StreamObserver<IncResponse> responseObserver = replicaInstance.clientIncRequests.remove(incRequest.getXid());
                                     responseObserver.onNext(response);
                                     responseObserver.onCompleted();
                                 }
 
                             }
-                            if (message.hasGet()) {
+                            if (message.hasGet() && replicaInstance.isValidRequest(message.getGet().getXid())) {
+                                //After this point, request is valid
                                 log.info("Processing Get");
                                 GetRequest getRequest = message.getGet();
 
                                 // If a client asked this replica to do this request, respond once it is processed
-                                if(replicaInstance.clientIncRequests.containsKey(getRequest.getXid())) {
+                                if(replicaInstance.clientGetRequests.containsKey(getRequest.getXid())) {
 
 
-                                    StreamObserver<GetResponse> responseObserver = replicaInstance.clientGetRequests.get(getRequest.getXid());
+                                    StreamObserver<GetResponse> responseObserver = replicaInstance.clientGetRequests.remove(getRequest.getXid());
 
                                     if(replicaInstance.mainMap.containsKey(getRequest.getKey())){
                                         //Return the value that the main map contains
@@ -103,9 +126,33 @@ public class ConsumerDriver extends Thread {
 
                                 }
 
+                                // Update client counters
+                                replicaInstance.clientCounters.put(getRequest.getXid().getClientid(), getRequest.getXid().getCounter());
+
+
                                 //If no client is waiting for this, do nothing!
 
                             }
+                            else if(message.hasGet()){
+                                GetRequest getRequest = message.getGet();
+                                //Request is invalid, return an empty response if a client asked you for this request
+                                log.info("Duplicate message received from Kafka -ignoring");
+                                if(replicaInstance.clientGetRequests.containsKey(getRequest.getXid())) {
+                                    StreamObserver<GetResponse> responseObserver = replicaInstance.clientGetRequests.remove(getRequest.getXid());
+                                    //Empty response
+                                    GetResponse response = GetResponse.newBuilder().build();
+                                    responseObserver.onNext(response);
+                                    responseObserver.onCompleted();
+                                }
+                            }
+
+                            //After each message, check if it's time to snapshot
+                            if (offset % (long)replicaInstance.messageThreshold == 0L) {
+                                log.info("Offset "+offset+ " mod "+replicaInstance.messageThreshold+" equals zero."
+                                +"Message Threshold hit - time to check for snapshots");
+                                replicaInstance.checkAndTakeSnapshot();
+                            }
+
                         } catch (InvalidProtocolBufferException e) {
                             log.info("Unable to parse value: " + e);
                         } catch (Exception e) {
@@ -119,8 +166,9 @@ public class ConsumerDriver extends Thread {
                     log.info("Problem acquiring semaphore");
                 }
             }
+            //Wait some time to allow to process debug requests, etc.
             try {
-                Thread.sleep(500);
+                Thread.sleep(50);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
