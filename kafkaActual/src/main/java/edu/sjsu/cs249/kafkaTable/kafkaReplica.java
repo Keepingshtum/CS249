@@ -51,7 +51,6 @@ public class kafkaReplica {
     public static String SNAPSHOT_ORDERING_TOPIC_NAME;
 
     public final Semaphore opSem = new Semaphore(1);
-
     public long snapshotOrderingOffset;
     public long operationsOffset;
     public String snapshotReplicaId;
@@ -170,7 +169,7 @@ public class kafkaReplica {
     public void checkAndTakeSnapshot() {
         // Increment the offset by one and check if it is your turn to snapshot now
         this.snapshotOrderingConsumer.seek(new TopicPartition(this.SNAPSHOT_ORDERING_TOPIC_NAME, 0), snapshotOrderingOffset+1);
-//        this.snapshotOrderingConsumer.poll(Duration.ofSeconds(0));
+        this.snapshotOrderingConsumer.poll(Duration.ofSeconds(0));
 
         //This time, we will actually define our records instead of using vars!
         ConsumerRecords<String, byte[]> records = this.snapshotOrderingConsumer.poll(Duration.ofSeconds(1));
@@ -296,7 +295,7 @@ public class kafkaReplica {
             snapshotReplicaId = latestSnapshotRecord.getReplicaId();
             //Set to 0 if offsets are -1, otherwise assign as normal
             operationsOffset = (latestSnapshotRecord.getOperationsOffset() == -1) ? 0 : latestSnapshotRecord.getOperationsOffset();
-            snapshotOrderingOffset = (latestSnapshotRecord.getSnapshotOrderingOffset() == -1) ? 0 : latestSnapshotRecord.getSnapshotOrderingOffset();
+            snapshotOrderingOffset = latestSnapshotRecord.getSnapshotOrderingOffset();
 
 
             //We have to iterate through each record in the snapshot map individually

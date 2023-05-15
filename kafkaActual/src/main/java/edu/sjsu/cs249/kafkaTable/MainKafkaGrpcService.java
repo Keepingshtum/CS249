@@ -23,6 +23,7 @@ public class MainKafkaGrpcService extends KafkaTableGrpc.KafkaTableImplBase {
      */
     @Override
     public void inc(IncRequest request, StreamObserver<IncResponse> responseObserver) {
+        //TODO: Synchronize if needed
         ClientXid xid = request.getXid();
         // if the replica has seen the request before, just ignore
         if (!replicaInstance.isValidRequest(xid)) {
@@ -55,6 +56,7 @@ public class MainKafkaGrpcService extends KafkaTableGrpc.KafkaTableImplBase {
      */
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
+        //TODO: Synchronize if needed
         ClientXid xid = request.getXid();
         if (!replicaInstance.isValidRequest(xid)) {
                 // ignore the get request , just respond back
